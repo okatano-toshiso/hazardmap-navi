@@ -1,0 +1,3 @@
+# Vendored third-party files are kept byte-identical to the verified upstream release (CRLF line endings).
+src/hinan/static/vendor/** -whitespace -text
+apps/eden-system/src/eden/static/vendor/** -whitespace -text

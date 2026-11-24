@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ハザードマップナビ — 今いる場所から、安全な避難先へ</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet-1.9.4/leaflet.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body data-csrf="{{ csrf }}" data-lat="{{ '%.5f'|format(center[0]) }}" data-lon="{{ '%.5f'|format(center[1]) }}"
+      data-external="{{ 'true' if advisor.external else 'false' }}">
+<header class="top">
+  <h1>ハザードマップナビ</h1>
+  <p>今いる場所の浸水の想定と、災害に合った避難場所・経路・連絡先をすぐに示します（{% for a in areas %}{{ a.config.name }}{% if not loop.last %}・{% endif %}{% endfor %}のオープンデータ）。</p>
+</header>
+
+<main class="layout">
+  <section class="mapwrap" aria-label="地図">
+    <div id="map"></div>
+    <p class="hint">色の付いた範囲が、選んだ災害の想定浸水区域です（ハザードマップポータルサイト）。緑の丸は、その災害に対応する指定緊急避難場所です。</p>
+  </section>
+
+  <section class="panel" aria-live="polite">
+    <div class="controls">
+      <div class="step">
+        <h2><span class="num">1</span>地域を選ぶ</h2>
+        <div class="area-cards" role="radiogroup" aria-label="地域">
+          {% for a in areas %}
+          <button type="button" class="area-card{% if loop.first %} on{% endif %}" data-area="{{ a.config.id }}" role="radio"
+                  aria-checked="{{ 'true' if loop.first else 'false' }}">
+            <span class="area-name">{{ a.config.name }}</span>
+            <span class="area-count" data-count-for="{{ a.config.id }}"></span>
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="step">
+        <h2><span class="num">2</span>災害の種類</h2>
+        <div class="hazards" role="radiogroup" aria-label="災害の種類">
+          {% for key, (label, _flag) in hazards.items() %}
+          <button type="button" class="hz{% if loop.first %} on{% endif %}" data-hazard="{{ key }}" role="radio"
+                  aria-checked="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="step">
+        <h2><span class="num">3</span>今いる場所</h2>
+        <div class="locate-row">
+          <button type="button" id="locate" class="primary">現在地を使う</button>
+          <span class="hint">または、地図をクリック</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="status" class="status">地点を選んでください。</div>
+
+
+    <div id="result" hidden>
+      <h2 id="area-name"></h2>
+      <h2>この場所の浸水の想定</h2>
+      <ul id="depths" class="depths"></ul>
+
+      <h2 id="sites-title">避難場所（徒歩で近い順）</h2>
+      <p id="note" class="note" hidden></p>
+      <ol id="sites" class="sites"></ol>
+      <p class="assume">徒歩時間は毎秒1mで計算した目安です。経路は OpenStreetMap の道路データから計算しています。</p>
+
+    </div>
+
+    <section class="contacts">
+      <h2>連絡先</h2>
+      <ul id="contacts">
+        {% for c in contacts %}
+        <li><span>{{ c.name }}<span class="cnote">{{ c.note }}</span></span>
+            <a class="tel" href="tel:{{ c.phone|replace('-', '') }}">{{ c.phone }}</a></li>
+        {% endfor %}
+        <li id="office" hidden><span><span id="office-name"></span><span class="cnote" id="office-note"></span></span>
+            <a class="tel" id="office-tel" href="#"></a></li>
+      </ul>
+    </section>
+  </section>
+</main>
+
+<footer class="foot">
+  <p><strong>これは採用課題の試作です。実際の避難では、各自治体・気象庁の最新の発表と、その場の状況を優先してください。</strong>
+     浸水深は想定であり、実際の災害とは異なることがあります。</p>
+  <p>出典：国土地理院「指定緊急避難場所データ」、ハザードマップポータルサイト（洪水・高潮・津波の浸水想定）、地理院タイル、
+     © OpenStreetMap contributors（ODbL）。いずれも本アプリで加工して表示しています。データ取得日時：
+     {% for a in areas %}{{ a.config.name }} {{ a.meta.fetched_at }}{% if not loop.last %}／{% endif %}{% endfor %}</p>
+</footer>
+
+<div id="chat-widget" class="chat-widget">
+  <section id="chat-panel" class="chat-panel" role="dialog" aria-label="AIアシスタント" hidden>
+    <header class="chat-head">
+      <div><strong>AIアシスタント</strong><span class="chat-sub">避難・防災の質問に答えます</span></div>
+      <button type="button" id="chat-close" class="chat-close" aria-label="閉じる">×</button>
+    </header>
+    <div class="chat-body">
+      <p class="assist-note">選んだ地域・災害（地点を選んだ後はその計算結果）と、気象庁などの公式資料の範囲で答えます。根拠のない数値や施設名を含む回答は表示しません。</p>
+      {% if advisor.external %}
+      <label class="consent"><input type="checkbox" id="consent"{% if demo_consent %} checked{% endif %}>
+        質問文と計算した結果（浸水の想定・避難場所の名前と距離）を外部AI（{{ advisor.model }}）へ送ることに同意します。座標は送りません。</label>
+      {% endif %}
+      <div id="chat-log" class="chat-log" aria-live="polite">
+        <div class="msg bot"><p>こんにちは。避難や防災について質問してください。地点を選ぶと「今やることを聞く」も使えます。</p></div>
+      </div>
+    </div>
+    <form id="chat-form" class="chat-form" autocomplete="off">
+      <button type="button" id="ask" class="chip" disabled title="地点を選ぶと使えます">今やることを聞く</button>
+      <div class="chat-input-row">
+        <textarea id="chat-input" rows="2" maxlength="300" placeholder="質問を入力（Enterで送信・Shift+Enterで改行）。個人情報は書かないでください"></textarea>
+        <button type="submit" id="chat-send" class="primary">送信</button>
+      </div>
+    </form>
+  </section>
+  <button type="button" id="chat-launcher" class="chat-launcher" aria-controls="chat-panel" aria-expanded="false">
+    <span class="chat-icon" aria-hidden="true">💬</span><span>AIに質問</span>
+  </button>
+</div>
+
+<script type="application/json" id="ui-config">{{ ui_config|tojson }}</script>
+<script src="{{ url_for('static', filename='vendor/leaflet-1.9.4/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+dist/
+build/
+coverage/
+*.log
+tmp/
+
+# 応募資料・秘密情報・取得データは明示的に選別してから追跡する。
+private/
+data/raw/
+artifacts/
+
+# OSMnx HTTP cache (raw Nominatim/Overpass responses); processed data lives in data/
+cache/
+
+# EDEN SYSTEM local database
+apps/eden-system/instance/
